@@ -1,0 +1,11 @@
+<resources>
+    <string name="app_name">NoScroll Guard</string>
+    <string name="ongoing_title">NoScroll Guard is watching</string>
+    <string name="repair_title">NoScroll permission was reset</string>
+    <string name="share_log">Share log</string>
+    <string name="pause">Pause for 30 minutes</string>
+    <string name="resume">Resume guarding</string>
+    <string name="status_ok">NoScroll is running, guard on duty</string>
+    <string name="status_broken">NoScroll permission is switched off</string>
+    <string name="status_no_permission">WRITE_SECURE_SETTINGS not granted. Run from a computer:\nadb shell pm grant io.github.haku4130.noscrollguard android.permission.WRITE_SECURE_SETTINGS</string>
+</resources>

@@ -1,0 +1,188 @@
+# NoScroll Guard
+
+Keeps the [NoScroll](https://play.google.com/store/apps/details?id=com.newswarajya.noswipe.reelshortblocker)
+accessibility service alive on Xiaomi HyperOS, which silently switches it off.
+
+If you use an accessibility-based focus app and keep waking up to
+*"this app isn't working properly"*, this is why — and this is a fix.
+
+## The problem
+
+On a Xiaomi 14T Pro running HyperOS 3 (Android 16), NoScroll's accessibility
+service stops working at unpredictable intervals. The system writes
+`secure accessibility_enabled = 0` while leaving `enabled_accessibility_services`
+untouched, and marks the service as crashed:
+
+```
+$ adb shell dumpsys accessibility
+     Bound services:{}
+     Enabled services:{{com.newswarajya.noswipe.reelshortblocker/...NoScrollAccessibilityService}}
+     Crashed services:{{com.newswarajya.noswipe.reelshortblocker/...NoScrollAccessibilityService}}
+```
+
+Once the service lands in `Crashed services`, flipping the toggle in Settings
+does not always bring it back.
+
+### What it is not
+
+These were checked against two days of `logcat` and ruled out:
+
+| Suspect | Verdict |
+|---|---|
+| App crash | No entries in the crash buffer; the process lived on for ~4 more hours |
+| Battery optimisation | Package is in the `deviceidle` whitelist, standby bucket 5 (EXEMPTED) |
+| Overnight cleanup | It happened mid-morning during active phone use |
+| App update | NoScroll had not been updated for over a month |
+| Xiaomi antivirus | Correlated in time, but force-running the scan job does not reproduce it |
+
+**The culprit is still unidentified.** Something with `WRITE_SECURE_SETTINGS`
+writes the setting once in a while. This app therefore fixes the effect, and
+records evidence so the cause can eventually be named.
+
+## The fix
+
+Writing `accessibility_enabled = 1` is **not enough** — the service stays in
+`Crashed services`. The full rebind cycle is:
+
+```bash
+settings put secure accessibility_enabled 0
+settings delete secure enabled_accessibility_services
+sleep 2
+settings put secure enabled_accessibility_services "<package>/<service>"
+settings put secure accessibility_enabled 1
+```
+
+The app performs exactly this whenever it detects the service is down.
+
+## The key trick: no root, no Shizuku
+
+`WRITE_SECURE_SETTINGS` looks unreachable for a normal app, but:
+
+```
+$ adb shell dumpsys package permission android.permission.WRITE_SECURE_SETTINGS
+    prot=signature|privileged|development|installer|role
+```
+
+The `development` flag means it can be granted over ADB, **once**, and it
+survives reboots:
+
+```bash
+adb shell pm grant io.github.haku4130.noscrollguard android.permission.WRITE_SECURE_SETTINGS
+```
+
+No root. No Shizuku, and therefore nothing to restart after every reboot.
+The cable is needed exactly once, at install time.
+
+## Install
+
+Requires a computer with `adb` and, on the phone, two Developer options
+toggles: **USB debugging (Security settings)** and **Install via USB**
+(both need a Mi account).
+
+```bash
+git clone https://github.com/haku4130/hyperos-accessibility-guard
+cd hyperos-accessibility-guard
+./install.sh
+```
+
+The script builds the APK, installs it, grants three permissions, adds the app
+to the battery whitelist and starts it.
+
+One step remains manual, because it cannot be granted over ADB:
+**Security → Permissions → Autostart → enable NoScroll Guard.**
+
+## How it works
+
+A `ContentObserver` watches `accessibility_enabled` and
+`enabled_accessibility_services`, so the reaction is immediate and costs no
+battery — no polling loop.
+
+There are three entry points, and each exists for a reason learned the hard way:
+
+| Source | When | Why it exists |
+|---|---|---|
+| `observer` | The moment the setting changes | The normal path |
+| `startup` | When the service starts | The observer only sees *changes*. A reset that happened while the guard was dead leaves no event behind |
+| `health check` | Every 15 minutes | Covers the observer dying, and a crashed service with no setting change |
+
+Before repairing, the app records what it can: timestamp, foreground app,
+screen state, and which package wrote the setting last. Evidence first, repair
+second — otherwise the app's own writes overwrite the evidence.
+
+### Naming the culprit
+
+The settings database stores a `pkg:` field naming the last writer. It is
+reachable through `dumpsys settings`, which needs the `DUMP` permission —
+also a `development` permission, so also grantable over ADB.
+
+Whether SELinux lets a regular app call `dumpsys` is device-dependent. **On
+Xiaomi 14T Pro / HyperOS 3 it is not blocked**, verified by breaking the
+setting over ADB and reading it back:
+
+```
+[observer] reset detected — master=off, service listed=yes, screen=on,
+           foreground app=com.miui.home, setting written by=com.android.shell
+[observer] Reset at 20:59, restored. Foreground app: com.miui.home.
+           Setting written by: com.android.shell
+```
+
+`com.android.shell` is correct — that was `adb`. When a real reset happens,
+that field will name the real culprit.
+
+If `dumpsys` is blocked on your device, the field reads
+`could not determine` and everything else still works.
+
+## The screen
+
+One screen: current state, a **Pause for 30 minutes** button, and the event
+journal with a share button. The pause exists so you can deliberately turn
+NoScroll off without the guard fighting you.
+
+NoScroll's own pause button does not touch the system permission — verified by
+sampling all three indicators across a pause/resume cycle — so the guard never
+interferes with it.
+
+## Limitations
+
+- **Force-stop defeats it.** When HyperOS force-stops the app, its scheduled
+  work is cancelled along with the process and it will not come back on its
+  own. The battery whitelist, autostart and `BOOT_COMPLETED` are what prevent
+  this; gaps will be visible in the journal.
+- **The NoScroll package is hardcoded** in
+  [`Constants.kt`](app/src/main/java/io/github/haku4130/noscrollguard/Constants.kt).
+  Point it at a different accessibility service and it should work the same —
+  the mechanism is not NoScroll-specific.
+- **Tested on exactly one device**: Xiaomi 14T Pro, HyperOS 3.0.301.0,
+  Android 16. Reports from other devices are welcome.
+
+## Before you install this
+
+If your accessibility service dies on a Xiaomi device, try these first — for
+many people one of them is the actual cause, and then you need no app at all:
+
+1. Developer options → turn off **MIUI optimisation**
+2. Play Store → Play Protect → turn off app scanning
+3. App info → turn off **Remove permissions if app is unused**
+4. Security → Autostart → enable the app
+5. Recents → long-press the card → lock it
+
+This app is for the case where all of that is already done and the service
+still dies.
+
+## Build
+
+```bash
+brew install openjdk@21
+brew install --cask android-commandlinetools
+sdkmanager "platforms;android-36" "build-tools;36.0.0"
+./gradlew test assembleDebug
+```
+
+Built against AGP 8.13.2, Kotlin 2.2.0, Gradle 9.5.1. Gradle 9.6+ does **not**
+work: it removed an internal API that AGP 8.x depends on.
+
+Design notes and the full investigation: [docs/DESIGN.md](docs/DESIGN.md).
+
+## License
+
+MIT
