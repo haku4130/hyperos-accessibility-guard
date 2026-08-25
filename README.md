@@ -224,6 +224,124 @@ interferes with it.
 - **Tested on exactly one device**: Xiaomi 14T Pro, HyperOS 3.0.301.0,
   Android 16. Reports from other devices are welcome.
 
+## Diagnosing your own device
+
+If your accessibility app keeps stopping, run these before assuming anything.
+Each one rules something in or out, and together they take about two minutes.
+Everything here is read-only except where noted.
+
+### 1. Is the permission actually on?
+
+```bash
+adb shell settings get secure accessibility_enabled
+adb shell settings get secure enabled_accessibility_services
+```
+
+`accessibility_enabled` must be `1` and your service must appear in the list.
+If the master switch is `0` while the service is still listed, something turned
+it off — that is failure mode one.
+
+### 2. Is the service actually running?
+
+```bash
+adb shell dumpsys accessibility | grep -E "Bound|Enabled|Crashed"
+```
+
+The interesting case is a service that appears in **both** `Bound services` and
+`Crashed services`. The settings look perfect, the app believes it holds its
+permission, and nothing works. That is failure mode two, and no UI anywhere
+tells you about it.
+
+### 3. Can it draw on screen?
+
+```bash
+adb shell cmd appops get <package> SYSTEM_ALERT_WINDOW
+```
+
+`allow` is what you want. `ignore` means the app can detect scrolling but
+cannot show its blocking screen — the completely silent failure. Check
+`rejectTime` in the output: it tells you how long the system has been refusing
+overlay requests, which is usually how long the app has been useless.
+
+### 4. Why did the process die?
+
+```bash
+adb shell dumpsys activity exit-info <package>
+```
+
+This is the single most useful command here, and it answered in one call what
+two days of log reading could not. Read `reason=`:
+
+| Reason | Meaning |
+|---|---|
+| `1 (EXIT_SELF)` | The process ended itself — not killed by anything |
+| `13 (OTHER KILLS BY SYSTEM)` | Check `description=`; `normal_mem_pressure` means memory |
+| `10 (USER REQUESTED)` + `FORCE STOP` | Someone force-stopped it — including you, from adb |
+| `16 (PACKAGE UPDATED)` | The app was updated underneath itself |
+
+### 5. Who wrote the setting?
+
+```bash
+adb shell dumpsys settings | grep accessibility_enabled
+```
+
+The `pkg:` field names the package that wrote the value last. Run it **before**
+touching anything — the moment you or an app rewrites the setting, that name is
+replaced and the evidence is gone. `pkg:android` means the system server did it,
+which usually means it was reacting to something rather than acting on its own.
+
+### 6. Make the logs survive the night
+
+Default log buffers hold roughly fifteen minutes on a busy phone, which is
+useless for something that breaks while you sleep:
+
+```bash
+adb shell logcat -G 64M
+```
+
+That survives until the next reboot and gave us two full days of history. When
+something does break, pull both buffers — kill reasons live in `events`, not in
+`main`:
+
+```bash
+adb logcat -d -b main -b system -v time > main.log
+adb logcat -d -b events -v time > events.log
+```
+
+`am_kill` in the events buffer means ActivityManager killed the process. Its
+*absence* next to an `am_proc_died` is meaningful: nothing killed it, it left on
+its own.
+
+### Repairing by hand
+
+If you just want it working again without installing anything (writes settings,
+needs **USB debugging (Security settings)** on Xiaomi):
+
+```bash
+adb shell settings put secure accessibility_enabled 0
+adb shell settings delete secure enabled_accessibility_services
+sleep 2
+adb shell settings put secure enabled_accessibility_services "<package>/<service>"
+adb shell settings put secure accessibility_enabled 1
+```
+
+And if the overlay permission was the problem:
+
+```bash
+adb shell appops set <package> SYSTEM_ALERT_WINDOW allow
+```
+
+**Then restart the guarded app.** Apps read that permission when they start, so
+a process that is already running keeps behaving as if it were still denied.
+This is not obvious and it cost an afternoon.
+
+## Reported upstream
+
+The findings were written up for the app's developer:
+[docs/BUG-REPORT.md](docs/BUG-REPORT.md). The silent overlay failure in
+particular looks fixable in the app itself — an accessibility blocker that
+cannot draw should say so rather than reporting itself as active.
+
 ## Before you install this
 
 If your accessibility service dies on a Xiaomi device, try these first — for
