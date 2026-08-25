@@ -8,4 +8,6 @@
     <string name="status_ok">NoScroll is running, guard on duty</string>
     <string name="status_broken">NoScroll permission is switched off</string>
     <string name="status_no_permission">WRITE_SECURE_SETTINGS not granted. Run from a computer:\nadb shell pm grant io.github.haku4130.noscrollguard android.permission.WRITE_SECURE_SETTINGS</string>
+    <string name="overlay_title">NoScroll cannot block anything</string>
+    <string name="overlay_text">Its "Display over other apps" permission was revoked, so it detects scrolling but cannot show the blocking screen. Tap to restore it.</string>
 </resources>

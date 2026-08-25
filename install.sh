@@ -25,7 +25,7 @@ echo "=== 2. Install ==="
 adb install -r "$APK"
 
 echo "=== 3. Permissions ==="
-for P in WRITE_SECURE_SETTINGS PACKAGE_USAGE_STATS DUMP; do
+for P in WRITE_SECURE_SETTINGS PACKAGE_USAGE_STATS DUMP GET_APP_OPS_STATS; do
   adb shell pm grant $PKG android.permission.$P 2>/dev/null && echo "  $P granted" || echo "  $P NOT granted"
 done
 

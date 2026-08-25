@@ -18,6 +18,7 @@ import io.github.haku4130.noscrollguard.repair.RepairResult
 import io.github.haku4130.noscrollguard.settings.AndroidSecureSettings
 import io.github.haku4130.noscrollguard.settings.SecureKeys
 import io.github.haku4130.noscrollguard.state.AccessibilityStateReader
+import io.github.haku4130.noscrollguard.state.OverlayPermissionProbe
 import io.github.haku4130.noscrollguard.work.HealthWorker
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -105,6 +106,8 @@ class GuardService : Service() {
             if (repairing.get()) return
             if (System.currentTimeMillis() - settledAt.get() < QUIET_AFTER_REPAIR_MS) return
 
+            checkOverlayPermission(context, source)
+
             val settings = AndroidSecureSettings(context.contentResolver)
             val reader = AccessibilityStateReader(settings)
             if (reader.isHealthy()) return
@@ -148,6 +151,33 @@ class GuardService : Service() {
             } finally {
                 settledAt.set(System.currentTimeMillis())
                 repairing.set(false)
+            }
+        }
+
+        /**
+         * Watched separately from accessibility, because it fails separately and silently:
+         * the guarded app keeps reporting itself active while being unable to put anything
+         * on screen. We can only detect and tell the user — restoring it needs a
+         * signature-level permission.
+         */
+        private var overlayWasRevoked = false
+
+        private fun checkOverlayPermission(context: Context, source: String) {
+            val allowed = OverlayPermissionProbe.isAllowed(context) ?: return
+            if (!allowed) {
+                if (!overlayWasRevoked) {
+                    overlayWasRevoked = true
+                    GuardApp.eventLog(context).append(
+                        System.currentTimeMillis(),
+                        "[$source] overlay permission revoked — the app cannot show its blocking screen"
+                    )
+                    GuardNotifications.notifyOverlayRevoked(context)
+                }
+            } else if (overlayWasRevoked) {
+                overlayWasRevoked = false
+                GuardApp.eventLog(context).append(
+                    System.currentTimeMillis(), "[$source] overlay permission is back"
+                )
             }
         }
     }

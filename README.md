@@ -50,7 +50,7 @@ Battery optimisation, overnight cleanup, app updates and the Xiaomi antivirus
 were each investigated and ruled out along the way; the notes are in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-### Two failure modes, not one
+### Three failure modes, not one
 
 **Permission switched off.** The obvious one: `accessibility_enabled = 0`, the
 app tells you it is not working properly.
@@ -60,7 +60,20 @@ master switch on, service listed — while the service sits in
 `Crashed services` doing nothing. The app believes it has its permission. You
 get no warning at all, and a settings-only health check sees nothing wrong.
 
-This app detects both.
+**Overlay permission revoked.** The quietest of all: the service runs, catches
+every scroll — and cannot put its blocking screen on screen, because
+`SYSTEM_ALERT_WINDOW` was set to `ignore`. The app's own notification still
+reads *"active: monitoring and blocking"*. Nothing anywhere says otherwise:
+
+```
+$ adb shell cmd appops get <package> SYSTEM_ALERT_WINDOW
+SYSTEM_ALERT_WINDOW: ignore; rejectTime=+3d13h35m ago
+```
+
+This app detects all three. It repairs the first two; the third it can only
+report, because restoring an app-op needs `MANAGE_APP_OPS_MODES`, which is
+signature-only and cannot be granted over ADB. The notification opens the exact
+settings screen where you can restore it in two taps.
 
 ## The fix
 
@@ -95,6 +108,21 @@ adb shell pm grant io.github.haku4130.noscrollguard android.permission.WRITE_SEC
 
 No root. No Shizuku, and therefore nothing to restart after every reboot.
 The cable is needed exactly once, at install time.
+
+Four permissions are granted this way, all of them carrying the `development`
+flag — `install.sh` does it for you:
+
+| Permission | What it buys |
+|---|---|
+| `WRITE_SECURE_SETTINGS` | Performing the rebind cycle |
+| `DUMP` | Reading the accessibility manager's real state, and naming who wrote the setting |
+| `GET_APP_OPS_STATS` | Seeing whether the guarded app may still draw overlays |
+| `PACKAGE_USAGE_STATS` | Recording which app was on screen when a reset happened |
+
+One thing is deliberately *not* on that list: `MANAGE_APP_OPS_MODES`, which
+would let the app restore the overlay permission itself. It is signature-only,
+with no `development` flag, so no amount of ADB will grant it. Hence detection
+plus a notification rather than a silent fix.
 
 ## Install
 
