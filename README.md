@@ -23,21 +23,44 @@ $ adb shell dumpsys accessibility
 Once the service lands in `Crashed services`, flipping the toggle in Settings
 does not always bring it back.
 
-### What it is not
+### The actual cause
 
-These were checked against two days of `logcat` and ruled out:
+It is not Xiaomi. `dumpsys activity exit-info` gives the verdict:
 
-| Suspect | Verdict |
-|---|---|
-| App crash | No entries in the crash buffer; the process lived on for ~4 more hours |
-| Battery optimisation | Package is in the `deviceidle` whitelist, standby bucket 5 (EXEMPTED) |
-| Overnight cleanup | It happened mid-morning during active phone use |
-| App update | NoScroll had not been updated for over a month |
-| Xiaomi antivirus | Correlated in time, but force-running the scan job does not reproduce it |
+```
+timestamp=2026-08-25 09:03:15.218  process=...:as_process
+reason=1 (EXIT_SELF)  subreason=0  status=0
+```
 
-**The culprit is still unidentified.** Something with `WRITE_SECURE_SETTINGS`
-writes the setting once in a while. This app therefore fixes the effect, and
-records evidence so the cause can eventually be named.
+**`EXIT_SELF` — the app's accessibility process terminates itself.** Every
+recorded death over two weeks reads the same way. Nothing killed it: not the
+system, not memory pressure, not the Play Store.
+
+The chain is then:
+
+1. NoScroll's `:as_process` exits on its own.
+2. The system marks the service crashed and schedules a restart ~31s later.
+3. The system server writes `accessibility_enabled = 0` in response.
+4. You wake up to an app that is not blocking anything.
+
+Step 3 is why the settings database blames `pkg:android` — the system reacting
+to a dead service, not switching it off on a whim.
+
+Battery optimisation, overnight cleanup, app updates and the Xiaomi antivirus
+were each investigated and ruled out along the way; the notes are in
+[docs/DESIGN.md](docs/DESIGN.md).
+
+### Two failure modes, not one
+
+**Permission switched off.** The obvious one: `accessibility_enabled = 0`, the
+app tells you it is not working properly.
+
+**Service stuck crashed.** The nastier one: the settings look *perfect* —
+master switch on, service listed — while the service sits in
+`Crashed services` doing nothing. The app believes it has its permission. You
+get no warning at all, and a settings-only health check sees nothing wrong.
+
+This app detects both.
 
 ## The fix
 
@@ -103,7 +126,13 @@ There are three entry points, and each exists for a reason learned the hard way:
 |---|---|---|
 | `observer` | The moment the setting changes | The normal path |
 | `startup` | When the service starts | The observer only sees *changes*. A reset that happened while the guard was dead leaves no event behind |
-| `health check` | Every 15 minutes | Covers the observer dying, and a crashed service with no setting change |
+| `screen on` | Screen on / device unlocked | A stuck-crashed service changes no setting, so the observer never fires for it. Blocking only matters while you are looking at the screen, so this is where it gets caught — in seconds, not minutes |
+| `health check` | Every 15 minutes | Backstop for the observer dying
+
+Health is judged on two axes: the settings, and what the accessibility manager
+actually thinks — the latter read from `dumpsys accessibility`. If the runtime
+state cannot be determined, the settings verdict stands; missing information
+never raises a false alarm.
 
 Before repairing, the app records what it can: timestamp, foreground app,
 screen state, and which package wrote the setting last. Evidence first, repair

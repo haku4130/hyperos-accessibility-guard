@@ -86,13 +86,14 @@ against a fake on the JVM with no device involved.
 | `SecureSettings` | The only door to `Settings.Secure`. Interface + Android impl + fake |
 | `AccessibilityStateReader` | Reads state. Changes nothing |
 | `AccessibilityRepairer` | Performs the rebind cycle. Decides nothing |
+| `AccessibilityRuntimeProbe` | Asks the accessibility manager what it really thinks, via `dumpsys` |
 | `EvidenceCollector` | Gathers context about the reset. Repairs nothing |
 | `GuardService` | Decides *when* to act, and wires the rest together |
 
 Supporting: `EventLog` (journal), `PauseState` (pause), `HealthWorker`
 (periodic backstop), `BootReceiver` (survive reboot), `MainActivity` (screen).
 
-## Three defects found on the device
+## Four defects found on the device
 
 Unit tests passed long before the app actually worked. These three only
 surfaced against the real system.
@@ -106,6 +107,12 @@ five notifications. Fixed with two guards: an in-progress flag and a
 per call, so the `@Synchronized` inside it guarded nothing — concurrent
 threads each read the file into their own copy and overwrote each other. The
 journal is now a single instance per process.
+
+**Duplicate evidence entries.** The repair lock was claimed *after* evidence
+collection, but collection runs `dumpsys` and takes ~100 ms. Every observer
+thread woken by the same reset walked through that window and logged its own
+copy — three entries for one event, some of them describing the mid-repair
+state. The lock is now claimed before any work begins.
 
 **No check on startup.** This was a hole in the design, not the code. The
 observer only fires on *changes*. If the setting was broken while the guard

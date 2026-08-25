@@ -2,7 +2,9 @@ package io.github.haku4130.noscrollguard.service
 
 import android.app.Service
 import android.content.Context
+import android.content.BroadcastReceiver
 import android.content.Intent
+import android.content.IntentFilter
 import android.database.ContentObserver
 import android.os.Handler
 import android.os.IBinder
@@ -27,6 +29,7 @@ import kotlin.concurrent.thread
 class GuardService : Service() {
 
     private lateinit var observer: ContentObserver
+    private lateinit var wakeReceiver: BroadcastReceiver
 
     override fun onCreate() {
         super.onCreate()
@@ -45,6 +48,22 @@ class GuardService : Service() {
             )
         }
 
+        // A crashed service leaves the settings untouched, so the observer never fires for
+        // it. Blocking only matters while the screen is on, so re-check whenever the user
+        // picks the phone up — that turns a 15-minute worst case into a few seconds.
+        wakeReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                thread { checkAndRepair(context, "screen on") }
+            }
+        }
+        registerReceiver(
+            wakeReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_SCREEN_ON)
+                addAction(Intent.ACTION_USER_PRESENT)
+            }
+        )
+
         // The observer only sees changes. If the setting was broken while the guard was
         // dead (reboot, force-stop, memory cleanup) there is no event left to catch,
         // so check the state immediately on start.
@@ -55,6 +74,7 @@ class GuardService : Service() {
 
     override fun onDestroy() {
         contentResolver.unregisterContentObserver(observer)
+        runCatching { unregisterReceiver(wakeReceiver) }
         super.onDestroy()
     }
 
@@ -89,32 +109,32 @@ class GuardService : Service() {
             val reader = AccessibilityStateReader(settings)
             if (reader.isHealthy()) return
 
-            Log.i("GuardTrace", "[$source] unhealthy, collecting evidence")
+            // Claim the work before collecting evidence, not after. Evidence collection
+            // runs dumpsys and takes ~100ms; without claiming first, every observer thread
+            // woken by the same reset walks through that window and logs a duplicate.
+            if (!repairing.compareAndSet(false, true)) return
+            try {
+
+            val settingsBroken = !reader.isSettingsHealthy()
+            val kind = if (settingsBroken) "permission was switched off" else "service was stuck crashed"
+            Log.i("GuardTrace", "[$source] unhealthy ($kind), collecting evidence")
             val log = GuardApp.eventLog(context)
             val evidence = EvidenceCollector(context, settings).collect()
-            log.append(evidence.timestampMs, "[$source] reset detected — ${evidence.describe()}")
+            log.append(evidence.timestampMs, "[$source] $kind — ${evidence.describe()}")
 
             if (GuardApp.pauseState(context).isPaused()) {
                 log.append(System.currentTimeMillis(), "[$source] paused — standing down")
                 return
             }
 
-            if (!repairing.compareAndSet(false, true)) {
-                Log.i("GuardTrace", "[$source] repair already running, backing off")
-                return
-            }
+
             Log.i("GuardTrace", "[$source] starting repair")
-            val result = try {
-                AccessibilityRepairer(settings).repair()
-            } finally {
-                settledAt.set(System.currentTimeMillis())
-                repairing.set(false)
-            }
+            val result = AccessibilityRepairer(settings).repair()
 
             val time = SimpleDateFormat("HH:mm", Locale.US).format(Date(evidence.timestampMs))
             val message = when (result) {
                 is RepairResult.Success ->
-                    "Reset at $time, restored. " +
+                    "$kind at $time, restored. " +
                         "Foreground app: ${evidence.foregroundApp ?: "unknown"}. " +
                         "Setting written by: ${evidence.lastWriterPackage ?: "could not determine"}"
                 is RepairResult.NoPermission ->
@@ -125,6 +145,10 @@ class GuardService : Service() {
             Log.i("GuardTrace", "[$source] repair finished: $result")
             log.append(System.currentTimeMillis(), "[$source] $message")
             GuardNotifications.notifyRepair(context, message)
+            } finally {
+                settledAt.set(System.currentTimeMillis())
+                repairing.set(false)
+            }
         }
     }
 }
