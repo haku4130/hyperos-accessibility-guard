@@ -73,4 +73,30 @@ object GuardNotifications {
             .build()
         context.getSystemService(NotificationManager::class.java).notify(ID_OVERLAY, n)
     }
+
+    /**
+     * Restoring the permission is not the end of it: apps check it when they start, so a
+     * running process keeps believing it may not draw until it restarts.
+     */
+    fun notifyOverlayRestored(context: Context) {
+        val launch = context.packageManager
+            .getLaunchIntentForPackage(Constants.NOSCROLL_PACKAGE)
+            ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+        val pending = launch?.let {
+            PendingIntent.getActivity(
+                context, 1, it, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+        }
+
+        val n = NotificationCompat.Builder(context, CHANNEL_EVENTS)
+            .setContentTitle(context.getString(R.string.overlay_back_title))
+            .setContentText(context.getString(R.string.overlay_back_text))
+            .setStyle(NotificationCompat.BigTextStyle().bigText(context.getString(R.string.overlay_back_text)))
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .apply { pending?.let { setContentIntent(it) } }
+            .setAutoCancel(true)
+            .build()
+        context.getSystemService(NotificationManager::class.java).notify(ID_OVERLAY, n)
+    }
 }

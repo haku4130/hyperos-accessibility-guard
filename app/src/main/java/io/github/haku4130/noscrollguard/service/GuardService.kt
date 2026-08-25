@@ -176,8 +176,13 @@ class GuardService : Service() {
             } else if (overlayWasRevoked) {
                 overlayWasRevoked = false
                 GuardApp.eventLog(context).append(
-                    System.currentTimeMillis(), "[$source] overlay permission is back"
+                    System.currentTimeMillis(),
+                    "[$source] overlay permission is back — the app must be reopened to pick it up"
                 )
+                // Apps read this permission when they start. Restoring it under a running
+                // process changes nothing until that process restarts, which cost an
+                // afternoon to discover.
+                GuardNotifications.notifyOverlayRestored(context)
             }
         }
     }

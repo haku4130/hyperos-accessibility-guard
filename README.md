@@ -33,8 +33,14 @@ reason=1 (EXIT_SELF)  subreason=0  status=0
 ```
 
 **`EXIT_SELF` — the app's accessibility process terminates itself.** Every
-recorded death over two weeks reads the same way. Nothing killed it: not the
-system, not memory pressure, not the Play Store.
+recorded death over two weeks reads the same way. Nothing *killed* it: there is
+no `am_kill`, no low-memory kill, no Play Store update.
+
+Read that carefully, though: `EXIT_SELF` says the process ended on its own, not
+*why* it decided to. An app told from the outside that its access is being
+withdrawn would exit exactly like this too. So this identifies the mechanism,
+not the motive — and blaming the app outright would be going beyond the
+evidence.
 
 The chain is then:
 
@@ -74,6 +80,12 @@ This app detects all three. It repairs the first two; the third it can only
 report, because restoring an app-op needs `MANAGE_APP_OPS_MODES`, which is
 signature-only and cannot be granted over ADB. The notification opens the exact
 settings screen where you can restore it in two taps.
+
+One trap worth knowing: restoring the overlay permission is not enough on its
+own. Apps read it when they start, so a process that was already running keeps
+behaving as if it were still denied. **Reopen the guarded app afterwards** —
+the guard now says so in a notification, because this cost an afternoon of
+"the permission is right there and it still does not block".
 
 ## The fix
 
