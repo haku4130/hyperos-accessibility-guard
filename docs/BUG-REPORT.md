@@ -1,7 +1,7 @@
 # Bug report sent to the NoScroll developer
 
-Draft of the report below. Copy it into an email; the support address is on the
-Play Store listing for NoScroll.
+Draft of the report below. The developer's support address, listed on
+[their own site](https://curizic.com/noscroll/), is **support@curizic.com**.
 
 ---
 
