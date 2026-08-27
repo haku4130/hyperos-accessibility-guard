@@ -11,6 +11,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
 import android.util.Log
+import io.github.haku4130.noscrollguard.Constants
 import io.github.haku4130.noscrollguard.GuardApp
 import io.github.haku4130.noscrollguard.evidence.EvidenceCollector
 import io.github.haku4130.noscrollguard.repair.AccessibilityRepairer
@@ -54,7 +55,14 @@ class GuardService : Service() {
         // picks the phone up — that turns a 15-minute worst case into a few seconds.
         wakeReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context, intent: Intent) {
-                thread { checkAndRepair(context, "screen on") }
+                val unlocked = intent.action == Intent.ACTION_USER_PRESENT
+                thread {
+                    checkAndRepair(context, if (unlocked) "unlock" else "screen on")
+                    // Reopening the app is what actually revives it, and an unlock is the
+                    // one moment when putting something on screen costs the user nothing:
+                    // they are already looking at it.
+                    if (unlocked) reopenGuardedAppIfNeeded(context)
+                }
             }
         }
         registerReceiver(
@@ -148,6 +156,9 @@ class GuardService : Service() {
             Log.i("GuardTrace", "[$source] repair finished: $result")
             log.append(System.currentTimeMillis(), "[$source] $message")
             GuardNotifications.notifyRepair(context, message)
+
+            // The settings are right again, but the app stays inert until reopened.
+            if (result is RepairResult.Success) GuardApp.restartFlag(context).markNeeded()
             } finally {
                 settledAt.set(System.currentTimeMillis())
                 repairing.set(false)
@@ -182,6 +193,39 @@ class GuardService : Service() {
                 // Apps read this permission when they start. Restoring it under a running
                 // process changes nothing until that process restarts, which cost an
                 // afternoon to discover.
+                GuardNotifications.notifyOverlayRestored(context)
+            }
+        }
+
+        /**
+         * Opens the guarded app once, if a repair has left it needing a restart.
+         *
+         * Needs SYSTEM_ALERT_WINDOW on this app, which is what exempts it from the
+         * background-activity-start restriction. Without that the launch is silently
+         * dropped, so the flag is only cleared once the launch actually goes out.
+         */
+        private fun reopenGuardedAppIfNeeded(context: Context) {
+            val flag = GuardApp.restartFlag(context)
+            if (!flag.isNeeded()) return
+
+            val launch = context.packageManager
+                .getLaunchIntentForPackage(Constants.NOSCROLL_PACKAGE)
+                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ?: return
+
+            val waited = flag.pendingForMs() / 1000
+            try {
+                context.startActivity(launch)
+                flag.clear()
+                GuardApp.eventLog(context).append(
+                    System.currentTimeMillis(),
+                    "[unlock] reopened ${Constants.NOSCROLL_PACKAGE} to revive it (waited ${waited}s)"
+                )
+            } catch (e: Exception) {
+                GuardApp.eventLog(context).append(
+                    System.currentTimeMillis(),
+                    "[unlock] could not reopen the app: ${e.javaClass.simpleName} — open it by hand"
+                )
                 GuardNotifications.notifyOverlayRestored(context)
             }
         }

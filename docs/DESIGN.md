@@ -121,11 +121,43 @@ catch, and the next scheduled check was up to 15 minutes away. A reset left
 the phone unprotected for that entire window. Fixed by checking state
 immediately when the service starts.
 
+## The fourth failure mode: repaired but still dead
+
+Days of real use surfaced one more. The guard restored the permission at 09:37
+after the app's process died at 09:36, and every system-visible signal went
+green — settings right, service bound, `Crashed services` empty, both processes
+alive, the app's own notification reading "active". Blocking stayed broken for
+the next three and a half hours.
+
+The evidence was in app-ops. Its `time=` field records when the op was last
+actually *used*, and for `SYSTEM_ALERT_WINDOW` it stopped at 09:36 — the moment
+of the crash. The app had drawn nothing since, despite holding the permission.
+
+Restarting the app fixed it, which raised the obvious question: can the guard do
+that itself? No, and the negative results are worth recording:
+
+| Attempt | Result |
+|---|---|
+| `am kill` / `killBackgroundProcesses` | Same PIDs — a foreground service is not a background process |
+| `FORCE_STOP_PACKAGES` | `signature\|privileged`, no `development` flag |
+| Disabling the service for 20s so the process is reclaimed as empty | Survived all 20s with the same PID |
+
+Only launching the app remains, and that needs `SYSTEM_ALERT_WINDOW` — granted
+for the background-activity-start exemption it carries, not for drawing.
+
+Doing it immediately would mean a phone lighting up with someone else's app at
+three in the morning. So a repair raises a persisted flag instead, and the app
+is opened at the next unlock, when the screen is already the user's focus. The
+flag lives in `SharedPreferences` because the guard's own process may die in
+between, and it is cleared only after `startActivity` actually returns — a
+silently dropped launch leaves it pending for the next attempt.
+
 ## Testing approach
 
-20 JVM unit tests cover the logic: state reading, the rebind cycle (including
+30 JVM unit tests cover the logic: state reading, the rebind cycle (including
 an assertion on the exact *order* of writes, which is the knowledge that was
-expensive to acquire and would be easy to break), the journal, and the pause.
+expensive to acquire and would be easy to break), the journal, the pause, and
+the restart flag.
 
 Device-dependent parts — `dumpsys`, `UsageStatsManager`, `PowerManager` — have
 no unit tests on purpose. They cannot be faked meaningfully, and a test built

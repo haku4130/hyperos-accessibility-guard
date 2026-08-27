@@ -3,6 +3,7 @@ package io.github.haku4130.noscrollguard
 import android.content.Context
 import io.github.haku4130.noscrollguard.log.EventLog
 import io.github.haku4130.noscrollguard.pause.PauseState
+import io.github.haku4130.noscrollguard.restart.RestartFlag
 import java.io.File
 
 /** Shared objects. No DI framework — there are only two of them. */
@@ -21,9 +22,13 @@ object GuardApp {
             log ?: EventLog(File(context.applicationContext.filesDir, "events.log")).also { log = it }
         }
 
-    fun pauseState(context: Context): PauseState {
-        val prefs = context.getSharedPreferences("guard", Context.MODE_PRIVATE)
-        val store = object : AbstractMutableMap<String, Long>() {
+    fun pauseState(context: Context): PauseState = PauseState(prefStore(context))
+
+    fun restartFlag(context: Context): RestartFlag = RestartFlag(prefStore(context))
+
+    private fun prefStore(context: Context): MutableMap<String, Long> {
+        val prefs = context.applicationContext.getSharedPreferences("guard", Context.MODE_PRIVATE)
+        return object : AbstractMutableMap<String, Long>() {
             override val entries: MutableSet<MutableMap.MutableEntry<String, Long>>
                 get() = throw UnsupportedOperationException()
 
@@ -40,6 +45,5 @@ object GuardApp {
                 return null
             }
         }
-        return PauseState(store)
     }
 }

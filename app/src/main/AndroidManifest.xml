@@ -10,6 +10,9 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.GET_APP_OPS_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Not for drawing: this is what exempts the guard from the background-activity-start
+         restriction, so it can reopen the guarded app after a repair. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

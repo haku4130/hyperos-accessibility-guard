@@ -29,15 +29,20 @@ for P in WRITE_SECURE_SETTINGS PACKAGE_USAGE_STATS DUMP GET_APP_OPS_STATS; do
   adb shell pm grant $PKG android.permission.$P 2>/dev/null && echo "  $P granted" || echo "  $P NOT granted"
 done
 
-echo "=== 4. Battery whitelist ==="
+echo "=== 4. Background activity start ==="
+# Not for drawing overlays: this app-op is what lets the guard reopen the guarded app
+# after a repair. Without it the launch is silently dropped.
+adb shell appops set $PKG SYSTEM_ALERT_WINDOW allow && echo "  SYSTEM_ALERT_WINDOW allowed"
+
+echo "=== 5. Battery whitelist ==="
 adb shell dumpsys deviceidle whitelist +$PKG
 
-echo "=== 5. Start ==="
+echo "=== 6. Start ==="
 # The service is exported=false, so start it through the activity.
 adb shell am start -n $PKG/.ui.MainActivity > /dev/null
 sleep 4
 
-echo "=== 6. Verify ==="
+echo "=== 7. Verify ==="
 adb shell dumpsys package $PKG 2>/dev/null | grep -E "WRITE_SECURE_SETTINGS: granted|PACKAGE_USAGE_STATS: granted"
 if adb shell pidof $PKG > /dev/null; then echo "  guard is running"; else echo "  WARNING: process did not come up"; fi
 

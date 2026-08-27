@@ -56,7 +56,7 @@ Battery optimisation, overnight cleanup, app updates and the Xiaomi antivirus
 were each investigated and ruled out along the way; the notes are in
 [docs/DESIGN.md](docs/DESIGN.md).
 
-### Three failure modes, not one
+### Four failure modes, not one
 
 **Permission switched off.** The obvious one: `accessibility_enabled = 0`, the
 app tells you it is not working properly.
@@ -76,16 +76,39 @@ $ adb shell cmd appops get <package> SYSTEM_ALERT_WINDOW
 SYSTEM_ALERT_WINDOW: ignore; rejectTime=+3d13h35m ago
 ```
 
-This app detects all three. It repairs the first two; the third it can only
+**The app is inert after a repair.** Restoring the permission is not the same as
+reviving the app. When its process dies, the service rebinds and every
+system-visible signal turns green — settings right, service bound, nothing
+crashed, its own notification reading "active" — while the app itself does
+nothing until it is reopened. `appops` is the tell: the `time=` field shows when
+the overlay was last actually *used*, and it stops at the moment of the crash.
+
+This app detects all four. It repairs the first two; the third it can only
 report, because restoring an app-op needs `MANAGE_APP_OPS_MODES`, which is
 signature-only and cannot be granted over ADB. The notification opens the exact
 settings screen where you can restore it in two taps.
 
 One trap worth knowing: restoring the overlay permission is not enough on its
 own. Apps read it when they start, so a process that was already running keeps
-behaving as if it were still denied. **Reopen the guarded app afterwards** —
-the guard now says so in a notification, because this cost an afternoon of
-"the permission is right there and it still does not block".
+behaving as if it were still denied. **The guarded app has to be reopened.**
+
+The guard cannot restart it. Three ways were tried and all three fail:
+
+| Attempt | Result |
+|---|---|
+| `killBackgroundProcesses` (permission level `normal`) | No effect — the process runs a foreground service |
+| `FORCE_STOP_PACKAGES` | `signature\|privileged`, no `development` flag — ungrantable |
+| Leaving the service disabled for 20s so the process is reclaimed | Process survives with the same PID |
+
+What is left is opening the app, which needs `SYSTEM_ALERT_WINDOW` — not for
+drawing, but because that app-op is what exempts an app from the
+background-activity-start restriction.
+
+So after a successful repair the guard raises a persisted flag and waits. On the
+next unlock — the one moment when putting something on screen costs the user
+nothing, because they are already looking at it — it opens the guarded app and
+clears the flag. A repair at 03:00 stays silent; the app is revived when you
+next pick the phone up.
 
 ## The fix
 
@@ -121,7 +144,7 @@ adb shell pm grant io.github.haku4130.noscrollguard android.permission.WRITE_SEC
 No root. No Shizuku, and therefore nothing to restart after every reboot.
 The cable is needed exactly once, at install time.
 
-Four permissions are granted this way, all of them carrying the `development`
+Five permissions are granted this way, all of them carrying the `development`
 flag — `install.sh` does it for you:
 
 | Permission | What it buys |
@@ -130,6 +153,7 @@ flag — `install.sh` does it for you:
 | `DUMP` | Reading the accessibility manager's real state, and naming who wrote the setting |
 | `GET_APP_OPS_STATS` | Seeing whether the guarded app may still draw overlays |
 | `PACKAGE_USAGE_STATS` | Recording which app was on screen when a reset happened |
+| `SYSTEM_ALERT_WINDOW` | Not for drawing — this is the app-op that permits starting the guarded app from the background |
 
 One thing is deliberately *not* on that list: `MANAGE_APP_OPS_MODES`, which
 would let the app restore the overlay permission itself. It is signature-only,
@@ -148,7 +172,7 @@ cd hyperos-accessibility-guard
 ./install.sh
 ```
 
-The script builds the APK, installs it, grants three permissions, adds the app
+The script builds the APK, installs it, grants five permissions, adds the app
 to the battery whitelist and starts it.
 
 One step remains manual, because it cannot be granted over ADB:
@@ -167,6 +191,7 @@ There are three entry points, and each exists for a reason learned the hard way:
 | `observer` | The moment the setting changes | The normal path |
 | `startup` | When the service starts | The observer only sees *changes*. A reset that happened while the guard was dead leaves no event behind |
 | `screen on` | Screen on / device unlocked | A stuck-crashed service changes no setting, so the observer never fires for it. Blocking only matters while you are looking at the screen, so this is where it gets caught — in seconds, not minutes |
+| `unlock` | Device unlocked | Same check, plus reopening the guarded app if a repair left it inert |
 | `health check` | Every 15 minutes | Backstop for the observer dying
 
 Health is judged on two axes: the settings, and what the accessibility manager
