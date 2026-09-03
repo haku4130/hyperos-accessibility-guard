@@ -5,3 +5,5 @@ local.properties
 .idea/
 .kotlin/
 letter-to-noscroll.txt
+*.jks
+*.keystore
