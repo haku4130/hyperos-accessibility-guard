@@ -1,5 +1,9 @@
 #!/bin/bash
-# Builds, installs and configures NoScroll Guard on a connected phone.
+# Installs and configures NoScroll Guard on a connected phone, building it first
+# unless you hand it a prebuilt APK.
+#
+#   ./install.sh                       build from source, then install
+#   ./install.sh --apk path/to.apk     install a downloaded release APK
 #
 # Requires on the phone (Developer options, both need a Mi account):
 #   - USB debugging (Security settings)  — to grant permissions
@@ -8,18 +12,36 @@ set -e
 
 PKG=io.github.haku4130.noscrollguard
 APK=app/build/outputs/apk/debug/app-debug.apk
+BUILD=yes
 
-export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@21}"
-export PATH="$JAVA_HOME/bin:$PATH"
-export ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
+case "$1" in
+  --apk)
+    [ -n "$2" ] || { echo "--apk needs a path to an APK"; exit 1; }
+    [ -f "$2" ] || { echo "No such file: $2"; exit 1; }
+    APK="$2"
+    BUILD=no
+    ;;
+  '') ;;
+  *) echo "Unknown option: $1 (expected --apk PATH)"; exit 1 ;;
+esac
+
+if [ "$BUILD" = yes ]; then
+  export JAVA_HOME="${JAVA_HOME:-/opt/homebrew/opt/openjdk@21}"
+  export PATH="$JAVA_HOME/bin:$PATH"
+  export ANDROID_HOME="${ANDROID_HOME:-/opt/homebrew/share/android-commandlinetools}"
+fi
 
 if ! adb devices | grep -q "device$"; then
   echo "No device connected (check the cable and pick 'File transfer' mode)"
   exit 1
 fi
 
-echo "=== 1. Build ==="
-./gradlew assembleDebug -q
+if [ "$BUILD" = yes ]; then
+  echo "=== 1. Build ==="
+  ./gradlew assembleDebug -q
+else
+  echo "=== 1. Build === skipped, installing $APK"
+fi
 
 echo "=== 2. Install ==="
 adb install -r "$APK"

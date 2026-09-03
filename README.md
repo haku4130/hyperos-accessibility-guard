@@ -164,15 +164,26 @@ plus a notification rather than a silent fix.
 
 Requires a computer with `adb` and, on the phone, two Developer options
 toggles: **USB debugging (Security settings)** and **Install via USB**
-(both need a Mi account).
+(both need a Mi account). The cable is unavoidable: the permissions this app
+needs cannot be granted from the phone itself.
+
+Grab the APK from [the latest release](https://github.com/haku4130/hyperos-accessibility-guard/releases/latest),
+then:
 
 ```bash
 git clone https://github.com/haku4130/hyperos-accessibility-guard
 cd hyperos-accessibility-guard
+./install.sh --apk ~/Downloads/noscroll-guard-1.0.0.apk
+```
+
+Or build it yourself instead, which additionally needs a JDK and the Android
+command-line tools — see [Build](#build):
+
+```bash
 ./install.sh
 ```
 
-The script builds the APK, installs it, grants five permissions, adds the app
+Either way the script installs the APK, grants five permissions, adds the app
 to the battery whitelist and starts it.
 
 One step remains manual, because it cannot be granted over ADB:
